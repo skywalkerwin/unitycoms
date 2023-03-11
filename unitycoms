@@ -1,0 +1,129 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;using System.IO.Ports;
+using System.Threading;
+
+public class serialHandCom : MonoBehaviour
+{
+    // Start is called before the first frame update
+    private Thread thread;
+    private bool isStopped = false;
+    public string portName = "COM";
+    SerialPort port;
+    bool firstContact = false;
+
+    private static int numBytes = 68;
+
+    public byte[] inBuffer = new byte[numBytes];
+
+    public float[,] imu = new float[5, 6];
+
+    public float[,,] nimu = new float[5, 6, nframes];
+
+    public float[,,] ihist = new float[5, 6, histlength];
+
+
+    public int hcount = 0;
+    public const int nframes = 20;
+    public const int histlength = 60;
+
+    public int thumbPressure = 0;
+    public int maxPressure = 0;
+    public int minPressure = 10000;
+    public float normPressure = 0f;
+
+    public int[] switches = new int[4];
+    public int off = 0;
+    const float ascale = .000488f;
+    const float gscale = .061068f;    
+    public int ttime = 0;
+    public float deltat = 0;
+
+    public GameObject index, middle, ring, pinky;
+
+    void Start()
+    {
+        Debug.Log(portName);
+        port = new SerialPort(portName, 20000000);
+        port.Open();
+        port.DtrEnable = true;
+        port.RtsEnable = true;
+        // StartThread();
+        thread = new Thread(collectHandData);
+        thread.Start();
+    }
+
+    // Update is called once per frame
+    void collectHandData()
+    {
+        while(!isStopped)
+        {
+            if (firstContact == false)
+            {
+                int readByte = port.ReadByte();
+                if (readByte == 82)
+                {
+                    firstContact = true;
+                }
+            }
+            else
+            {
+                if (port.BytesToRead > 67)
+                {
+                    int res = port.Read(inBuffer, 0, numBytes);
+                    port.Write("A");
+                    for (int i = 0; i < 5; i++)
+                    {
+                        // ACCEL
+                        imu[i, 0] = (((sbyte)inBuffer[0 + (i * 12)] << 8) | ((sbyte)inBuffer[1 + (i * 12)] & 0xff));
+                        imu[i, 1] = (((sbyte)inBuffer[2 + (i * 12)] << 8) | ((sbyte)inBuffer[3 + (i * 12)] & 0xff));
+                        imu[i, 2] = (((sbyte)inBuffer[4 + (i * 12)] << 8) | ((sbyte)inBuffer[5 + (i * 12)] & 0xff));
+                        // GYRO
+                        imu[i, 3] = (((sbyte)inBuffer[6 + (i * 12)] << 8) | ((sbyte)inBuffer[7 + (i * 12)] & 0xff));
+                        imu[i, 4] = (((sbyte)inBuffer[8 + (i * 12)] << 8) | ((sbyte)inBuffer[9 + (i * 12)] & 0xff));
+                        imu[i, 5] = (((sbyte)inBuffer[10 + (i * 12)] << 8) | ((sbyte)inBuffer[11 + (i * 12)] & 0xff));
+
+                        for (int j = 0; j < 6; j++)
+                        {
+                            if (j < 3) { imu[i, j] = imu[i, j] * ascale; }
+                            else { imu[i, j] = imu[i, j] * gscale; }
+                            // APPEND TO HISTORIES
+                            nimu[i, j, off] = imu[i, j];
+                            ihist[i, j, hcount] = imu[i, j];
+                        }
+                    }
+                    thumbPressure = ((sbyte)inBuffer[60] | (sbyte)inBuffer[61]);
+                    int rangePress = maxPressure - minPressure;
+                    normPressure = (1.0f * thumbPressure - minPressure) / rangePress;
+                    switches[0] = 1 - inBuffer[62];
+                    switches[1] = 1 - inBuffer[63];
+                    switches[2] = 1 - inBuffer[64];
+                    switches[3] = 1 - inBuffer[65];
+
+                    ttime = (((sbyte)inBuffer[66] << 8) | ((sbyte)inBuffer[67] & 0xff));
+                    // calcAvgs();
+                    // calcSavgs();
+                    // calcXYZavgs();
+                    off = off + 1;
+                    if (off == nframes) { off = 0; }
+                    deltat = ttime / 1000000.0f;
+                    hcount++;
+                    if (hcount == histlength) { hcount = 0; }
+                    //sensorfusion();
+                }
+            }
+            // Debug.Log(portName + " TIME: " + ttime);
+            for (int h = 0; h < histlength; h++)
+            {
+                // Debug.Log(portName + "HIST: " + h + " -- " + ihist[0, 0, h]);
+            }
+        }
+    }
+
+    private void OnApplicationQuit()
+    {
+        port.Close();
+        thread.Abort();
+        isStopped = true;
+    }
+}
